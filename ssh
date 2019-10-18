@@ -1,2 +1,2 @@
 #!/bin/bash
-ssh pi@10.0.0.77
+ssh -t pi@10.0.0.77 "cd /home/pi/scripts/rpi-ir-control ; bash"
