@@ -32,8 +32,9 @@ class IR_Receiver():
             else:
                 # occasionally we'll get rogue pulses. ignore these
                 if len(pulses) > 2:
-                    self._print_pulses(pulses)
-                    print(self._pulses_to_binary(pulses))
+                    if self._pulses_match_protocol(pulses):
+                        self._print_pulses(pulses)
+                        print(self._pulses_to_binary(pulses))
                 pulses = []
 
         while 1:
@@ -54,17 +55,24 @@ class IR_Receiver():
         return pulse
 
     def _print_pulses(self, pulses):
-        if pulses[0][1] is not True:
-            print("Pulses does not start with a LOW pulse")
-            return
-        if len(pulses) % 2 != 0:
-            print("Pulses does not have matching pairs of (LOW, HIGH) pulses")
-            return
-
         print("{0:10} {1:10}".format("OFF (1)", "ON (0)"))
         for idx in range(0, len(pulses), 2):
             print("{0:7.2f} usecs {1:7.2f} usecs".format(pulses[idx][0],
                                                          pulses[idx+1][0]))
+
+    def _pulses_match_protocol(self, pulses):
+        if pulses[0][1] is not True:
+            print("Pulses does not start with a LOW pulse")
+            return False
+        if len(pulses) % 2 != 0:
+            print("Pulses does not have matching pairs of (LOW, HIGH) pulses")
+            return False
+        # range is arbitrary based on results I've seen that *seem* correct
+        if len(pulses) - 3 != len([pulse for pulse, is_high in pulses[3:]
+                                   if 2.99 <= pulse <= 17]):
+            print("One or more pulses does not fit in the expected range")
+            return False
+        return True
 
     def _pulses_to_binary(self, pulses):
         pulse_bin = ""
