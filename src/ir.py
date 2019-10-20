@@ -9,21 +9,21 @@ FORMAT = '%(asctime)-15s [%(levelname)s] %(message)s'
 logging.basicConfig(format=FORMAT, level=logging.INFO)
 log = logging.getLogger(__name__)
 
-"""
-Pulse
-
-A pulse read from the IR Receiver as defined by the NEC Infrared Transmission
-Protocol.
-
-More information on the NEC Infrared Transmission Protocol can be found at:
-https://techdocs.altium.com/display/FPGA/NEC+Infrared+Transmission+Protocol
-
-Parameters
-    length:    pulse length in seconds
-    is_space:  the pulse marks a space (1 on IR Receiver)
-               as opposed to a burst (0 on IR Receiver)
-"""
 class Pulse():
+    """
+    Pulse
+
+    A pulse read from the IR Receiver as defined by the NEC Infrared
+    Transmission Protocol.
+
+    More information on the NEC Infrared Transmission Protocol can be found at:
+    https://techdocs.altium.com/display/FPGA/NEC+Infrared+Transmission+Protocol
+
+    Parameters
+        length:    pulse length in seconds
+        is_space:  the pulse marks a space (1 on IR Receiver)
+                   as opposed to a burst (0 on IR Receiver)
+    """
     # small gap as defined by the NEC Infrared Transmission Protocol
     NEC_SMALL_GAP = 562.5 * 0.000001  # sec
 
