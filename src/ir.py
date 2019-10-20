@@ -86,10 +86,10 @@ class IR_Receiver():
 
         def track_pulse(pulse):
             nonlocal pulses
-            if pulse:
-                if self.MIN_PULSE_READ < pulse.length < self.MAX_PULSE_READ:
-                    log.debug(pulse)
-                    pulses.append(pulse)
+            if pulse and \
+               self.MIN_PULSE_READ < pulse.length < self.MAX_PULSE_READ:
+                log.debug(pulse)
+                pulses.append(pulse)
             elif len(pulses) > 0:
                 message = None
                 try:
