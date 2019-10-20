@@ -1,6 +1,54 @@
+import logging
 import time
+from datetime import datetime
+from typing import List
 
 from gpiozero import InputDevice, LED
+
+FORMAT = '%(asctime)-15s [%(levelname)s] %(message)s'
+logging.basicConfig(format=FORMAT, level=logging.INFO)
+log = logging.getLogger(__name__)
+
+"""
+Pulse
+
+A pulse read from the IR Receiver as defined by the NEC Infrared Transmission
+Protocol.
+
+More information on the NEC Infrared Transmission Protocol can be found at:
+https://techdocs.altium.com/display/FPGA/NEC+Infrared+Transmission+Protocol
+
+Parameters
+    length:    pulse length in seconds
+    is_space:  the pulse marks a space (1 on IR Receiver)
+               as opposed to a burst (0 on IR Receiver)
+"""
+class Pulse():
+    # small gap as defined by the NEC Infrared Transmission Protocol
+    NEC_SMALL_GAP = 562.5 * 0.000001  # sec
+
+    # large gap as defined by the NEC Infrared Transmission Protocol
+    NEC_LARGE_GAP = 1687.5 * 0.000001  # sec
+
+    # tolerance for detecting an NEC gap - arbitrary
+    GAP_TOLERANCE = 270 * 0.000001  # sec
+
+    def __init__(self, length, is_space):
+        self.length = length
+        self.is_space = is_space
+
+    def __str__(self):
+        return f"{int(self.is_space)} {int(self.length * 1000000)} usecs"
+
+    def is_small_gap(self):
+        min = self.NEC_SMALL_GAP - self.GAP_TOLERANCE
+        max = self.NEC_SMALL_GAP + self.GAP_TOLERANCE
+        return min <= self.length <= max
+
+    def is_large_gap(self):
+        min = self.NEC_LARGE_GAP - self.GAP_TOLERANCE
+        max = self.NEC_LARGE_GAP + self.GAP_TOLERANCE
+        return min <= self.length <= max
 
 
 class IR_Receiver():
@@ -9,80 +57,133 @@ class IR_Receiver():
 
     Contains helpful functions for decoding IR signals from a physical IR
     Receiver.
+
+    IR Receivers signal 1 by default when no IR signal is detected, and 0
+    otherwise. So a HIGH pulse is 0, while a LOW pulse is 1.
+
+    More information on the NEC Infrared Transmission Protocol can be found at:
+    https://techdocs.altium.com/display/FPGA/NEC+Infrared+Transmission+Protocol
     """
 
-    # maximum pulse length that counts as a read
-    MAX_READ_PULSE = 65 * 0.001
+    # minimum pulse length that counts as a read - arbitrary
+    MIN_PULSE_READ = 50 * 0.000001  # sec
 
-    # timing resolution for pulse reads
-    PULSE_RESOLUTION = 10 * 0.000001
+    # maximum pulse length that counts as a read - arbitrary
+    MAX_PULSE_READ = 65000 * 0.000001  # sec
 
     def __init__(self):
         self.sensor = InputDevice(16)
         self.led = LED(26)
 
     def read_loop(self):
-        print("Reading IR inputs")
-        pulses = []
+        """
+        Continuously reads IR pulses and decodes them into NEC compliant
+        messages.
+        """
+        log.info("Reading IR inputs")
 
-        def track_pulse(pulse, is_high):
+        pulses: List[Pulse] = []
+
+        def track_pulse(pulse):
             nonlocal pulses
-            if pulse != 0:
-                pulses.append((pulse * 100000, is_high))
-            else:
-                # occasionally we'll get rogue pulses. ignore these
-                if len(pulses) > 2:
-                    if self._pulses_match_protocol(pulses):
-                        self._print_pulses(pulses)
-                        print(self._pulses_to_binary(pulses))
+            if pulse:
+                if self.MIN_PULSE_READ < pulse.length < self.MAX_PULSE_READ:
+                    log.debug(pulse)
+                    pulses.append(pulse)
+            elif len(pulses) > 0:
+                message = None
+                try:
+                    message = self._pulses_to_binary_message(pulses)
+                except ValueError as e:
+                    log.error(e, exc_info=True)
+                finally:
+                    if message:
+                        log.info(hex(message))
                 pulses = []
 
         while 1:
-            high_pulse = self._sense_pulse(False)
-            track_pulse(high_pulse, False)
-            low_pulse = self._sense_pulse(True)
-            track_pulse(low_pulse, True)
+            # empty space (registers as 1 on IR Receiver)
+            space_pulse = self._sense_pulse(True)
+            track_pulse(space_pulse)
+            # burst pulse (registers as 0 on IR Receiver)
+            burst_pulse = self._sense_pulse(False)
+            track_pulse(burst_pulse)
 
-    def _sense_pulse(self, active):
-        pulse = 0
-        while self.sensor.is_active is active:
-            # pulse has timed out, return nothing
-            if pulse >= self.MAX_READ_PULSE:
-                return 0
-            self.led.on() if not active else self.led.off()
-            pulse += self.PULSE_RESOLUTION
-            time.sleep(self.PULSE_RESOLUTION)
-        return pulse
+    def _sense_pulse(self, is_space):
+        """Listens for a pulse space or burst."""
+        start = datetime.now()
+        while self.sensor.is_active is is_space:
+            # timed out, return nothing
+            if (datetime.now() - start).total_seconds() >= self.MAX_PULSE_READ:
+                return None
+            self.led.off() if is_space else self.led.on()
+        return Pulse((datetime.now() - start).total_seconds(), is_space)
 
-    def _print_pulses(self, pulses):
-        print("{0:10} {1:10}".format("OFF (1)", "ON (0)"))
+    def _sanitize_pulses(self, pulses):
+        """
+        Confirms pulses received match expected pattern and removes preceding
+        pulses not relevant to the message, i.e. [<arbitrary space>,
+        9ms leading pulse burst, 4.5ms space], as well as trailing burst.
+        """
+        if pulses[0].is_space is not True:
+            raise ValueError("Pulse patterns must begin with a space")
+        if len(pulses) != 68:
+            raise ValueError(f"Pulse patterns must be 68 pulses long (1 space "
+                             f"+ 1 9ms burst + 1 4.5ms space + 64 message "
+                             f"pulses + 1 trailing burst). Received: "
+                             f"{len(pulses)}")
         for idx in range(0, len(pulses), 2):
-            print("{0:7.2f} usecs {1:7.2f} usecs".format(pulses[idx][0],
-                                                         pulses[idx+1][0]))
+            if not (pulses[idx].is_space is True and
+                    pulses[idx+1].is_space is False):
+                raise ValueError(f"Pulse pattern does not alternate between "
+                                 f"spaces and bursts beginning at index {idx}")
 
-    def _pulses_match_protocol(self, pulses):
-        if pulses[0][1] is not True:
-            print("Pulses does not start with a LOW pulse")
-            return False
-        if len(pulses) % 2 != 0:
-            print("Pulses does not have matching pairs of (LOW, HIGH) pulses")
-            return False
-        # range is arbitrary based on results I've seen that *seem* correct
-        if len(pulses) - 3 != len([pulse for pulse, is_high in pulses[3:]
-                                   if 2.99 <= pulse <= 17]):
-            print("One or more pulses does not fit in the expected range")
-            return False
-        return True
+        # remove all pulses not relevant to encoded message
+        pulses = pulses[3:-1]
 
-    def _pulses_to_binary(self, pulses):
-        pulse_bin = ""
-        # ignore first and last pulse, then read in pairs
-        for idx in range(1, len(pulses)-1, 2):
-            if pulses[idx+1][0] / pulses[idx][0] >= 2:
-                pulse_bin += "1"
+        for idx in range(0, len(pulses), 2):  # bursts
+            if not pulses[idx].is_small_gap():
+                raise ValueError(f"Burst at index {idx} does not match NEC"
+                                 f"specifications ({pulses[idx]})")
+        for idx in range(1, len(pulses), 2):  # spaces
+            if not (pulses[idx].is_small_gap() or pulses[idx].is_large_gap()):
+                raise ValueError(f"Space at index {idx} does not match NEC "
+                                 f"specifications ({pulses[idx]})")
+        return pulses
+
+    def _pulses_to_binary_message(self, pulses):
+        """Converts sequence of pulses into NEC compliant binary message."""
+        try:
+            pulses = self._sanitize_pulses(pulses)
+        except ValueError as e:
+            log.error(e)
+            return None
+
+        msg_str = ""
+        # use size of spaces to determine encoded message values
+        for idx in range(1, len(pulses), 2):
+            if pulses[idx].is_small_gap():
+                msg_str += "0"
+            elif pulses[idx].is_large_gap():
+                msg_str += "1"
             else:
-                pulse_bin += "0"
-        return pulse_bin
+                raise ValueError(f"Pulse pattern malformed")
+
+        msg_bin = int(msg_str, 2)
+
+        # validate address and command
+        address = msg_bin & 0xFF000000 >> (6 * 4)
+        address_inverse = msg_bin & 0x00FF0000 >> (4 * 4)
+        command = msg_bin & 0x0000FF00 >> (2 * 4)
+        command_inverse = msg_bin & 0x000000FF
+        if command == ~command_inverse:
+            raise ValueError(f"Address does not match inverse ({hex(address)} "
+                             f"{hex(address_inverse)})")
+        if command == ~command_inverse:
+            raise ValueError(f"Command does not match inverse ({hex(command)} "
+                             f"{hex(command_inverse)})")
+
+        return msg_bin
 
 
 if __name__ == "__main__":
