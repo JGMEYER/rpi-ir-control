@@ -1,5 +1,4 @@
 import logging
-import time
 from datetime import datetime
 from typing import List
 
@@ -8,6 +7,7 @@ from gpiozero import InputDevice, LED
 FORMAT = '%(asctime)-15s [%(levelname)s] %(message)s'
 logging.basicConfig(format=FORMAT, level=logging.INFO)
 log = logging.getLogger(__name__)
+
 
 class Pulse():
     """
@@ -51,7 +51,7 @@ class Pulse():
         return min <= self.length <= max
 
 
-class IR_Receiver():
+class IRReceiver():
     """
     IR Receiver
 
@@ -133,8 +133,8 @@ class IR_Receiver():
                              f"pulses + 1 trailing burst). Received: "
                              f"{len(pulses)}")
         for idx in range(0, len(pulses), 2):
-            if not (pulses[idx].is_space is True and
-                    pulses[idx+1].is_space is False):
+            if not (pulses[idx].is_space is True
+                    and pulses[idx+1].is_space is False):
                 raise ValueError(f"Pulse pattern does not alternate between "
                                  f"spaces and bursts beginning at index {idx}")
 
@@ -149,6 +149,7 @@ class IR_Receiver():
             if not (pulses[idx].is_small_gap() or pulses[idx].is_large_gap()):
                 raise ValueError(f"Space at index {idx} does not match NEC "
                                  f"specifications ({pulses[idx]})")
+
         return pulses
 
     def _pulses_to_binary_message(self, pulses):
@@ -187,4 +188,4 @@ class IR_Receiver():
 
 
 if __name__ == "__main__":
-    IR_Receiver().read_loop()
+    IRReceiver().read_loop()
