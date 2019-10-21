@@ -1,1 +1,1 @@
-pipenv run python src/ir.py
+pipenv run python src/ir/devices.py
